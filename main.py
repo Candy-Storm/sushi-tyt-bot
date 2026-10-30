@@ -18,6 +18,7 @@ import handlers_broadcast
 import handlers_export
 import handlers_prizes
 import handlers_stats
+import handlers_team
 import handlers_user
 import prizes
 import wheel
@@ -56,6 +57,17 @@ async def main() -> None:
     db = Database(settings.db_path)
     await db.connect()
 
+    # Ролі: ID з .env переносяться в базу (один раз), далі власник керує командою в боті.
+    owners, admins = await db.sync_staff(
+        settings.owner_ids, settings.admin_ids - settings.owner_ids, int(time.time())
+    )
+    settings.set_roles(owners, admins)
+    if not owners:
+        log.warning("Немає жодного власника: розсилки, призи й статистика будуть недоступні. Вкажіть OWNER_IDS у .env.")
+    if not settings.admin_ids:
+        log.warning("Немає жодного касира чи власника: панель касира буде недоступна.")
+    log.info("Команда: власників %s, касирів %s", len(owners), len(admins))
+
     # Призи й шанси зберігаються в базі (їх змінює власник у Telegram).
     active, archived = await db.load_prizes()
     prizes.configure(active, archived)
@@ -84,6 +96,7 @@ async def main() -> None:
     dp.include_router(handlers_backup.router)
     dp.include_router(handlers_stats.router)
     dp.include_router(handlers_export.router)
+    dp.include_router(handlers_team.router)
     dp.include_router(handlers_user.router)
 
     expire_task = asyncio.create_task(expire_loop(db))

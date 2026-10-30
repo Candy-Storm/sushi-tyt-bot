@@ -60,6 +60,15 @@ CREATE TABLE IF NOT EXISTS reminder_log (
 CREATE INDEX IF NOT EXISTS idx_reminder_user ON reminder_log(telegram_id, sent_at);
 CREATE INDEX IF NOT EXISTS idx_reminder_ref ON reminder_log(kind, ref);
 
+-- Команда: власники й касири, яких додали через бота. Рядок з роллю 'none' —
+-- людину видалили: .env більше не повертає її (ID з .env лише додаються, коли ще не відомі).
+CREATE TABLE IF NOT EXISTS staff (
+    telegram_id INTEGER PRIMARY KEY,
+    role        TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'none')),
+    added_by    INTEGER,                       -- хто призначив (NULL — з .env)
+    updated_at  INTEGER NOT NULL
+);
+
 -- Призи рулетки (змінюються власником у Telegram). Видалені призи не стираються,
 -- а позначаються archived = 1, щоб старі промокоди й надалі мали назву.
 CREATE TABLE IF NOT EXISTS prize_config (
@@ -553,3 +562,69 @@ class Database:
         """
         async with self._db.execute(sql) as cur:
             return [tuple(row) for row in await cur.fetchall()]
+
+    # ---------------------------------------------------------------- команда (ролі)
+    async def sync_staff(self, env_owners, env_admins, now: int) -> tuple[set[int], set[int]]:
+        """Переносить ID з .env у базу (лише тих, кого база ще не знає) і повертає ролі.
+
+        Далі джерело правди — база: так видалення через бота не скасовується
+        перезапуском, а нові ID в .env підхоплюються.
+        """
+        async with self._write_lock:
+            async with self._db.execute("SELECT telegram_id FROM staff") as cur:
+                known = {row[0] for row in await cur.fetchall()}
+            for uid in sorted(set(env_owners) | set(env_admins)):
+                if uid not in known:
+                    role = "owner" if uid in env_owners else "admin"
+                    await self._db.execute(
+                        "INSERT INTO staff (telegram_id, role, added_by, updated_at) VALUES (?,?,NULL,?)",
+                        (uid, role, now),
+                    )
+            await self._db.commit()
+        return await self.load_staff()
+
+    async def load_staff(self) -> tuple[set[int], set[int]]:
+        """(власники, касири); касирі — без власників."""
+        async with self._db.execute("SELECT telegram_id, role FROM staff") as cur:
+            rows = [tuple(row) for row in await cur.fetchall()]
+        return ({u for u, r in rows if r == "owner"}, {u for u, r in rows if r == "admin"})
+
+    async def list_staff(self) -> list[tuple]:
+        """Команда для показу: (telegram_id, role, phone|None); власники першими."""
+        sql = (
+            "SELECT s.telegram_id, s.role, u.phone FROM staff s "
+            "LEFT JOIN users u ON u.telegram_id = s.telegram_id "
+            "WHERE s.role IN ('owner', 'admin') "
+            "ORDER BY CASE s.role WHEN 'owner' THEN 0 ELSE 1 END, s.updated_at, s.telegram_id"
+        )
+        async with self._db.execute(sql) as cur:
+            return [tuple(row) for row in await cur.fetchall()]
+
+    async def get_role(self, telegram_id: int) -> str:
+        async with self._db.execute("SELECT role FROM staff WHERE telegram_id = ?", (telegram_id,)) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else "none"
+
+    async def set_role(self, telegram_id: int, role: str, by: int | None, now: int) -> str:
+        """Призначає роль ('owner' | 'admin' | 'none'). Повертає 'ok', 'same' або 'last_owner'.
+
+        Останнього власника ні зняти, ні понизити не можна.
+        """
+        if role not in ("owner", "admin", "none"):
+            raise ValueError(role)
+        async with self._write_lock:
+            current = await self.get_role(telegram_id)
+            if current == role or (current == "none" and role == "none"):
+                return "same"
+            if current == "owner":
+                async with self._db.execute("SELECT COUNT(*) FROM staff WHERE role = 'owner'") as cur:
+                    if (await cur.fetchone())[0] <= 1:
+                        return "last_owner"
+            await self._db.execute(
+                "INSERT INTO staff (telegram_id, role, added_by, updated_at) VALUES (?,?,?,?) "
+                "ON CONFLICT(telegram_id) DO UPDATE SET role = excluded.role, "
+                "added_by = excluded.added_by, updated_at = excluded.updated_at",
+                (telegram_id, role, by, now),
+            )
+            await self._db.commit()
+        return "ok"

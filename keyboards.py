@@ -20,6 +20,7 @@ BTN_PRIZES = "🎰 Призи"
 BTN_BACKUP = "💾 Резервна копія"
 BTN_STATS = "📊 Статистика"
 BTN_CLIENTS = "📥 Клієнти (Excel)"
+BTN_TEAM = "👥 Команда"
 BTN_BACK = "⬅️ Меню клієнта"
 BTN_CANCEL = "❌ Скасувати"
 
@@ -64,7 +65,7 @@ def admin_menu(is_owner: bool = False) -> ReplyKeyboardMarkup:
     if is_owner:
         rows.append([KeyboardButton(text=BTN_BROADCAST), KeyboardButton(text=BTN_PRIZES)])
         rows.append([KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_CLIENTS)])
-        rows.append([KeyboardButton(text=BTN_BACKUP)])
+        rows.append([KeyboardButton(text=BTN_TEAM), KeyboardButton(text=BTN_BACKUP)])
     rows.append([KeyboardButton(text=BTN_BACK)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 

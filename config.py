@@ -44,14 +44,22 @@ BACKUP_CHECK_INTERVAL = 600
 BACKUP_MAX_SEND_BYTES = 49 * 1024 * 1024
 
 
-@dataclass(frozen=True)
+@dataclass
 class Settings:
     token: str
-    admin_ids: frozenset[int]      # усі, хто бачить панель касира (ADMIN_IDS + OWNER_IDS)
+    admin_ids: frozenset[int]      # усі, хто бачить панель касира (касири + власники)
     db_path: str
     tz: ZoneInfo
-    owner_ids: frozenset[int] = frozenset()   # лише ці люди можуть робити розсилки
+    owner_ids: frozenset[int] = frozenset()   # власники: розсилки, призи, статистика, команда
     backup_dir: str = "backups"               # куди складати резервні копії бази
+
+    def set_roles(self, owners, admins) -> None:
+        """Оновлює ролі на льоту (власник додав або видалив людину в боті).
+
+        admins — лише касири; власники автоматично бачать і панель касира.
+        """
+        self.owner_ids = frozenset(owners)
+        self.admin_ids = frozenset(admins) | self.owner_ids
 
 
 def _load_tz(name: str) -> ZoneInfo:
@@ -89,11 +97,7 @@ def load_settings() -> Settings:
 
     admin_ids = _parse_ids(os.getenv("ADMIN_IDS", ""), "ADMIN_IDS")
     owner_ids = _parse_ids(os.getenv("OWNER_IDS", ""), "OWNER_IDS")
-    if not admin_ids and not owner_ids:
-        # Бот працюватиме, але касир не зможе перевіряти коди.
-        print("⚠️  ADMIN_IDS порожній: панель касира буде недоступна.")
-    if not owner_ids:
-        print("⚠️  OWNER_IDS порожній: розсилки будуть недоступні.")
+    # Попередження про порожні ролі тепер у main.py: люди можуть бути додані в самому боті.
 
     return Settings(
         token=token,
